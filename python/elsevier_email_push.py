@@ -28,6 +28,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = ROOT / ".env"
+DEFAULT_SENT_HISTORY_PATH = ROOT / ".cache" / "elsevier_sent_history.json"
 DEFAULT_QUERY = (
     '"intercity travel" OR "multilayer network" OR '
     '"multilayer transport network" OR "transport accessibility"'
@@ -369,7 +370,7 @@ def search_elsevier(api_key: str, query: str, count: int, days: int, source: str
     recent = [paper for paper in papers if is_recent(paper.date, cutoff)]
     candidates = recent or papers
     journal_filtered = filter_by_journals(candidates)
-    return (journal_filtered if journal_filtered or strict_journal_filter_enabled() else candidates)[:count]
+    return journal_filtered if journal_filtered or strict_journal_filter_enabled() else candidates
 
 
 def strict_journal_filter_enabled() -> bool:
@@ -477,6 +478,73 @@ def dedupe_papers(papers: list[Paper]) -> list[Paper]:
     return result
 
 
+def sent_history_path() -> Path:
+    configured = env("ELSEVIER_SENT_HISTORY_PATH")
+    return Path(configured) if configured else DEFAULT_SENT_HISTORY_PATH
+
+
+def paper_history_key(paper: Paper) -> str:
+    doi = paper.doi.strip().lower()
+    if doi and not doi.upper().startswith("SCOPUS_ID"):
+        return "doi:" + doi
+    title = re.sub(r"\s+", " ", paper.title.strip().lower())
+    return "title:" + title
+
+
+def load_sent_history() -> dict[str, Any]:
+    path = sent_history_path()
+    if not path.exists():
+        return {"version": 1, "sent": {}}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"version": 1, "sent": {}}
+    if isinstance(data, dict) and isinstance(data.get("sent"), dict):
+        return data
+    if isinstance(data, list):
+        return {"version": 1, "sent": {str(key): {"legacy": True} for key in data}}
+    return {"version": 1, "sent": {}}
+
+
+def filter_unsent_papers(papers: list[Paper], history: dict[str, Any]) -> list[Paper]:
+    sent = history.get("sent", {})
+    if not isinstance(sent, dict):
+        return papers
+    sent_keys = set(sent.keys())
+    return [paper for paper in papers if paper_history_key(paper) not in sent_keys]
+
+
+def record_sent_papers(papers: list[Paper], history: dict[str, Any]) -> None:
+    if not papers:
+        return
+    sent = history.setdefault("sent", {})
+    if not isinstance(sent, dict):
+        sent = {}
+        history["sent"] = sent
+    sent_at = datetime.now(timezone.utc).isoformat()
+    for paper in papers:
+        sent[paper_history_key(paper)] = {
+            "title": paper.title,
+            "doi": paper.doi,
+            "publication": paper.publication,
+            "date": paper.date,
+            "sent_at": sent_at,
+        }
+
+    limit = int(env("ELSEVIER_SENT_HISTORY_LIMIT", "1000"))
+    if len(sent) > limit:
+        ordered = sorted(
+            sent.items(),
+            key=lambda item: str(item[1].get("sent_at", "")) if isinstance(item[1], dict) else "",
+            reverse=True,
+        )
+        history["sent"] = dict(ordered[:limit])
+
+    path = sent_history_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def render_email(papers: list[Paper], query: str, source: str) -> tuple[str, str, str]:
     today = datetime.now().strftime("%Y-%m-%d")
     subject = f"Elsevier 文献推送 - {today} - {len(papers)} 篇"
@@ -561,6 +629,11 @@ def main() -> int:
     load_dotenv()
     parser = argparse.ArgumentParser(description="Send Elsevier paper recommendations to email.")
     parser.add_argument("--dry-run", action="store_true", help="Print the digest instead of sending email.")
+    parser.add_argument(
+        "--record-only",
+        action="store_true",
+        help="Record the current selected papers as sent without sending email.",
+    )
     args = parser.parse_args()
 
     api_key = env("ELSEVIER_API_KEY")
@@ -573,8 +646,15 @@ def main() -> int:
     count = int(env("ELSEVIER_MAX_RESULTS", "20"))
     days = int(env("ELSEVIER_DAYS", "7"))
     query = build_query()
-    papers = dedupe_papers(search_elsevier(api_key, query, count, days, source))
+    history = load_sent_history()
+    candidates = dedupe_papers(search_elsevier(api_key, query, count, days, source))
+    papers = filter_unsent_papers(candidates, history)[:count]
     subject, text_body, html_body = render_email(papers, query, source)
+
+    if args.record_only:
+        record_sent_papers(papers, history)
+        print(f"Recorded {len(papers)} papers as sent in {sent_history_path()}")
+        return 0
 
     if args.dry_run:
         print(subject)
@@ -582,6 +662,7 @@ def main() -> int:
         return 0
 
     send_email(subject, text_body, html_body)
+    record_sent_papers(papers, history)
     print(f"Sent {len(papers)} Elsevier papers to {env('MAIL_TO') or env('SMTP_USER')}")
     return 0
 

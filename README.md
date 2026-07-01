@@ -79,7 +79,7 @@ python python\elsevier_email_push.py
 
 ### 3. 设置每天 7 点自动发送
 
-Windows 下运行：
+方式一：使用 Windows 本地计划任务。Windows 下运行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\install_elsevier_email_task.ps1
@@ -87,7 +87,38 @@ powershell -ExecutionPolicy Bypass -File scripts\install_elsevier_email_task.ps1
 
 脚本会创建名为 `Zotero Tracker Elsevier Email Push` 的计划任务，每天 07:00 自动运行邮件推送。
 
-### 4. Zotero 文件夹兴趣种子
+注意：本地计划任务依赖本机运行环境。如果电脑完全关机，任务无法执行；如果只是睡眠，需要系统允许“唤醒定时器”。
+
+方式二：使用 GitHub Actions 云端定时任务。仓库已包含 `.github/workflows/elsevier-email-push.yml`，会在每天北京时间 07:00 运行。此方式不依赖本机开机，但需要在 GitHub 仓库中配置 Secrets：
+
+```text
+ELSEVIER_API_KEY
+SMTP_HOST
+SMTP_PORT
+SMTP_USER
+SMTP_PASSWORD
+MAIL_TO
+```
+
+配置入口：
+
+```text
+GitHub 仓库 -> Settings -> Secrets and variables -> Actions -> New repository secret
+```
+
+GitHub Actions 使用 UTC 时间，工作流中的 `0 23 * * *` 对应北京时间每天 07:00。GitHub 的定时任务可能有几分钟延迟，这是平台正常行为。
+
+### 4. 避免重复推送
+
+脚本会把已成功发送的论文记录到：
+
+```text
+.cache/elsevier_sent_history.json
+```
+
+后续运行时会按 DOI 或标题过滤已发送过的论文，尽量保证每天推送的是新论文。GitHub Actions 版本会用 Actions cache 保存这份历史记录。
+
+### 5. Zotero 文件夹兴趣种子
 
 可以在 `.env` 中配置 Zotero collection 名称：
 
@@ -98,7 +129,7 @@ ZOTERO_SQLITE_PATH=
 
 如果填写 `ZOTERO_SQLITE_PATH`，脚本会尝试从对应 Zotero 文件夹中的论文标题、摘要和标签提取关键词；如果不填写，会使用内置交通方向关键词兜底。
 
-### 5. GitHub 上传安全要求
+### 6. GitHub 上传安全要求
 
 上传 GitHub 前请确认：
 

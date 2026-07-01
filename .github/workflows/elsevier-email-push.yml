@@ -1,0 +1,54 @@
+name: Elsevier Traffic Paper Email Push
+
+on:
+  schedule:
+    # GitHub Actions uses UTC. 23:00 UTC is 07:00 in Asia/Shanghai.
+    - cron: "0 23 * * *"
+  workflow_dispatch:
+
+jobs:
+  send-email:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      ELSEVIER_API_KEY: ${{ secrets.ELSEVIER_API_KEY }}
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      MAIL_TO: ${{ secrets.MAIL_TO }}
+      ELSEVIER_SOURCE: scopus
+      ELSEVIER_QUERY:
+      ELSEVIER_KEYWORDS: intercity travel, intercity mobility, multilayer transport network, multimodal transport network, public transport network, transport accessibility, transportation network, high speed rail, urban agglomeration
+      ELSEVIER_DOMAIN_FILTER: transportation, transport, mobility, transit, railway, rail, high speed rail, accessibility
+      ELSEVIER_MAX_RESULTS: "20"
+      ELSEVIER_CANDIDATE_MULTIPLIER: "8"
+      ELSEVIER_DAYS: "14"
+      ELSEVIER_STRICT_JOURNAL_FILTER: "true"
+      ELSEVIER_JOURNAL_FILTER: Transportation Research Part A: Policy and Practice, Transportation Research Part B: Methodological, Transportation Research Part C: Emerging Technologies, Transportation Research Part D: Transport and Environment, Transportation Research Part E: Logistics and Transportation Review, IEEE Transactions on Intelligent Transportation Systems, IEEE Transactions on Intelligent Vehicles, Transportation Science, Transportmetrica A: Transport Science, Transportmetrica B: Transport Dynamics, Journal of Transport Geography, Transportation, Transport Policy, Travel Behaviour and Society, Accident Analysis and Prevention, Analytic Methods in Accident Research, International Journal of Sustainable Transportation, Transportation Research Record
+      ELSEVIER_SENT_HISTORY_PATH: .cache/elsevier_sent_history.json
+      ELSEVIER_SENT_HISTORY_LIMIT: "2000"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Restore sent-paper history
+        uses: actions/cache@v4
+        with:
+          path: .cache/elsevier_sent_history.json
+          key: elsevier-sent-history-${{ github.run_id }}
+          restore-keys: |
+            elsevier-sent-history-
+
+      - name: Prepare cache directory
+        run: mkdir -p .cache
+
+      - name: Send Elsevier paper digest
+        run: python python/elsevier_email_push.py
