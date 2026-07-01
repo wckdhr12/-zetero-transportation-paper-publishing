@@ -27,7 +27,8 @@ $Trigger = New-ScheduledTaskTrigger -Daily -At $Time
 $Settings = New-ScheduledTaskSettingsSet `
   -AllowStartIfOnBatteries `
   -DontStopIfGoingOnBatteries `
-  -StartWhenAvailable
+  -StartWhenAvailable `
+  -WakeToRun
 
 Register-ScheduledTask `
   -TaskName $TaskName `
@@ -38,4 +39,5 @@ Register-ScheduledTask `
   -Force | Out-Null
 
 Write-Host "Installed scheduled task '$TaskName' at $Time."
-Write-Host "Test manually with: python `"$ScriptPath`" --dry-run"
+Write-Host "Python executable: $PythonExe"
+Write-Host "Test manually with: `"$PythonExe`" `"$ScriptPath`" --dry-run"
